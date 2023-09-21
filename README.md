@@ -25,7 +25,7 @@ This repository contains a collection of data science projects that cover variou
 - Tools: R, k-Means Clustering, Data Clustering
 
 ### [Outlier Detection Using Grubbs Test](https://github.com/ericmcai/Projects/tree/main/Outlier%20Detection)
-- Description: Detecting outliers in datasets using the Grubbs Test statistical method.
+- Description: Detecting outliers in a crime dataset using the Grubbs Test statistical method.
 - Tools: R, Grubbs Test, Outlier Detection
 
 Feel free to explore these projects to learn more about each topic and the data science techniques used. If you have any questions or feedback, please don't hesitate to reach out.
