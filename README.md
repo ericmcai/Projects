@@ -4,7 +4,7 @@ This repository contains a collection of data science projects that cover variou
 
 ## Projects
 
-### [Assessing Pauline Authorship Using Logistic Regression]([link-to-repo)](https://github.com/ericmcai/Projects/tree/main/Assessing%20Pauline%20Authorship%20Using%20Logistic%20Regression)
+### [Assessing Pauline Authorship Using Logistic Regression]([link-to-repo](https://github.com/ericmcai/Projects/tree/main/Assessing%20Pauline%20Authorship%20Using%20Logistic%20Regression))
 - Description: Analyzing text data to assess the authorship of Pauline Epistles using logistic regression.
 - Tools: Python, Logistic Regression, Natural Language Processing (NLP)
 
