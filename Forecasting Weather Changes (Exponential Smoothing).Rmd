@@ -1,0 +1,535 @@
+---
+title: "Forecasting Weather Changes"
+author: "Eric Cai"
+date: "2023-09-21"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir='~/Documents/Data Sets/')
+extrafont::loadfonts(quiet=TRUE)
+library(dplyr)
+library(knitr)
+library(tidyverse)
+library(hrbrthemes)
+library(viridis)
+library(outliers)
+library(reshape2)
+library(qcc)
+library(lubridate)
+library(smooth)
+library(zoo)
+rm(list=ls())
+```
+
+# Forecasting Weather Changes Using Exponential Smoothing
+
+*Using the 20 years of daily high temperature data for Atlanta (July through October) (file temps.txt), build and use an exponential smoothing model to help make a judgment of whether the unofficial end of summer has gotten later over the 20 years.*
+
+## Preparing Our Data
+
+We load in our file as usual and inspect it.
+
+```{r}
+file <- 'temps.txt'
+temps <- read.table(file,header=T)
+col_names <- seq(1996,2015,by=1)
+colnames(temps)[-1] <- col_names
+head(temps)
+```
+
+In order to build an exponential smoothing model, we need to first convert our data into a time-series object. If we take a look at `HoltWinters`, it takes in a ts object. But if we inspect the `ts()` function, we'll notice that it only takes in a vector or a matrix of our time-series values. It's like peeling back one layer of onion only for us to have to peel back another layer!
+
+So, first, we convert our temps data into a vector and then convert it into a time-series object. This is optional, but I chose to plot how our data looks like as a time-series object.
+
+```{r}
+temps_vect <- as.vector(unlist(temps[,2:21]))
+temps.ts <- ts(temps_vect, start=colnames(temps)[2], 
+               frequency=nrow(temps))
+ggplot(data.frame(Year = index(temps.ts), Temperature = coredata(temps.ts)), 
+       aes(x = Year, y = Temperature)) +
+  geom_line(color = '#3D85F7', linewidth=0.35) +
+  labs(x = "Year", y = "Mean Temperature", title = "Avg Temps Per Year") +
+  theme_ipsum() +
+  theme(
+    plot.title = element_text(size = 12, 
+                              face = "bold", 
+                              color = "grey25"),
+    axis.text.x = element_text(size = 9),
+    axis.text.y = element_text(size = 9),
+    plot.background = element_rect(fill = "#F5F4EF", color = NA)
+  )
+```
+
+## The Holt-Winters' Method
+
+Looks gnarly, but the plot actually helps us identify what kind of smoothing model we need for our data. If we examine the plot, we see some familiar patterns that wax and wane for the same 4-month time period across 20ish years.
+
+This indicates that we may be dealing with data that has seasonal trends (obviously, weather patterns are rather predictable). As a result, we'll seek to build a model that incorporates the level smoothing equation, plus the trend, and seasonal component, since we're trying to conclusively determine if there is a trend (apart from just looking at the plot).
+
+This is otherwise known as the Holt-Winters' (HW) seasonal method, a generalization of exponential smoothing. There are two "flavors" of the HW method: *additive* and *multiplicative*.
+
+The additive method is preferred when the seasonal variations are roughly constant through the series, while the multiplicative method is preferred when the seasonal variations are changing proportional to the level of the series. I'm not sure which one to choose, so I'm going to try both.
+
+But before we do that, we need to determine our best parameters for our Holt-Winters' model. If we don't supply parameters for the model, the function will determine the best values on its own. Before I have the function do it for me, I want to determine the $\alpha, \beta, \gamma$ values on our own. 
+
+### Choosing our $\alpha, \beta, \gamma$ Values
+
+```{r}
+## we initialize a huge dataframe that consists of numerous alpha, 
+## beta, gamma values incremented by 0.1 
+parameter_grid <- as.data.frame(expand.grid(alpha = seq(0.1, 1, by = 0.1), 
+                                            beta = seq(0, 1, by = 0.1), 
+                                            gamma = seq(0.1, 1, by = 0.1),
+                                            seasonal=c('additive',
+                                                       'multiplicative')))
+## here's an example of what the dataframe looks like
+head(parameter_grid[1:6,])
+head(parameter_grid[1101:1106,])
+## initialize empty variables so we can store them in our loops
+best_mse_additive <- Inf
+best_params_additive <- NULL
+best_mse_multiplicative <- Inf
+best_params_multiplicative <- NULL
+## this will loop through our seasonal factors
+for(type in c('additive','multiplicative')){
+        ## this will loop through the length of parameter_grid
+        for(i in 1:nrow(parameter_grid)){
+                ## we set each row as params
+                params <- parameter_grid[i,]
+                ## then we access the seasonal column and check if it matches 
+                ## type, if it does, the following happens
+                if(params$seasonal==type){
+                        ## we supply our model with the values of each params row
+                        hw_model <- HoltWinters(temps.ts, 
+                                                alpha = params$alpha,
+                                                beta = params$beta, 
+                                                gamma = params$gamma,
+                                                seasonal=type)
+                }
+                        ## calculate the mean squared error (MSE)
+                        mse <- hw_model$SSE/nrow(hw_model$fitted)
+        ## then moving out of the inner loop, we check our type
+        if(type=='additive'){
+                ## if it meets the condition above, we pass it through another test
+                if(mse < best_mse_additive) {
+                        ## if our current MSE is less than the best, 
+                        ## then we update it as our best and repeat until it 
+                        ## reaches its highest value
+                        best_mse_additive <- mse
+                        best_params_additive <- params
+                }
+        } else{
+                ## if type != 'additive', then this happens
+                if(mse < best_mse_multiplicative){
+                        ## we repeat the same process for multiplicative
+                        best_mse_multiplicative <- mse
+                        best_params_multiplicative <- params
+                        }
+                }
+        }
+}
+best_params <- rbind(best_params_additive, best_params_multiplicative)
+best_params$RMSE <- c(sqrt(best_mse_additive),sqrt(best_mse_multiplicative))
+colnames(best_params) <- c("Alpha", "Beta", "Gamma", "Seasonality", "RMSE")
+kable(
+        best_params,
+        align='c',
+        caption='Best Values'
+)
+```
+
+What do our $\alpha, \beta, \gamma$ values mean in the context of our data set? As we learned, $\alpha$ controls the smoothing of the level component. It determines how much weight should be given to the most recent observation when updating the estimated level. This is our level equation:
+
+$$
+S_t = \alpha x_{t} + (1-\alpha)S_{t-1} \,\,\,\,\,\,\, 0 < \alpha \le 1
+$$
+
+The higher $\alpha$ is the more weight we give to the most recent observation. Conversely, the lower $\alpha$ is the more we rely on past observations. An $\alpha$ value of 0.7 suggests that the model places relatively high weight on the most recent observation when updating the level component. 
+
+$\beta$ controls the smoothing of the trend component, determining how much weight should be given the most recent change in the level when updating the estimated trend. 
+$$
+T_t = \beta(S_t-S_{t-1})+(1-\beta)T_{t-1}
+$$
+Like $\alpha$, $\beta$ determines how much weight should be given to the most recent change in the level. A higher $\beta$ places more weight on recent changes, while a lower $\beta$ places more weight on historical changes in the level equation. A $\beta$ of 0.1 suggests that the model places relatively low weight on recent changes, implying that our trend is relatively stable and is less responsive to recent changes. 
+
+Finally, $\gamma$ controls the smoothing of the seasonal component. What if our data shows trends and seasonality? In this case, double smoothing will not work, and we will need to include a seasonal component, which includes the $\gamma$ parameter. $\gamma$ determines how much weight should be given to seasonal patterns when updating the estimated season component, given as:
+
+$$
+C_t=\gamma(\frac{x_t}{S_t})+(1-\gamma)C_{t-1}
+$$
+
+As our equation suggests, the higher $\gamma$ is the more weight we place on seasonal patterns, where previous seasonal patterns matter less as the second term gets smaller and smaller. On the other hand, the smaller $\gamma$ is the less weight we place on seasonality. A $\gamma$ of 0.6 means that our model places relatively higher weight on seasonal patterns, making it more sensitive to changes in seasonality. 
+
+Put together, we get this nasty-looking equation:
+
+$$
+S_t=\alpha(\frac{x_t}{C_{t-L}})+(1-\alpha)(S_{t-1}+T{t-1})
+$$
+Another thing that we see in our table is that that our additive model performed slightly better than the multiplicative model with slightly smaller RMSE. I'm inclined to run with additive seasonals, but just for kicks, let's test to see how they both look on graphs compared to our original data. 
+
+```{r}
+hw.add <- HoltWinters(temps.ts, seasonal='additive')
+hw.mult <- HoltWinters(temps.ts, seasonal='multiplicative')
+```
+
+What the Holt-Winters' model does is it uses our data from the year 1996 as its input data to predict the temperatures of the subsequent years. This is why our temps.ts data differs in the number of rows (`r length(temps.ts)`) from `hw.add` and `hw.mult`, which contains 2337, missing 123 rows from 1996.
+
+I want to create a chart that fits the models to our original data. To do that, I'm going to prepare the data and put it into a data frame.
+
+```{r}
+## we subset our temps.ts vector starting with 1997
+temps_subset <- window(temps.ts, start = c(1997, 1))
+## we grab the fitted values from the HW additive method
+hw.add_fitted <- hw.add$fitted[, "xhat"]
+## then we grab the fitted values from the HW multiplicative method
+hw.mult_fitted <- hw.mult$fitted[, "xhat"]
+dates <- index(temps_subset)
+## creating a data frame for plotting
+plot_data <- data.frame(
+  Date = dates,
+  Actual = as.vector(temps_subset),
+  Additive_Forecast = as.vector(hw.add_fitted),
+  Multiplicative_Forecast = as.vector(hw.mult_fitted)
+)
+kable(head(plot_data),
+      col.names = c('Date', 'Actual Temperature', 
+                    'Additive Forecast', 
+                    'Multiplicative Forecast'),
+      align = 'c',
+      caption = 'Comparing Models with Original Data'
+)
+```
+
+Now that we've created our data frame, let's compare them to the original data. I'll plot the multiplicative model first, then the additive.
+
+### Multiplicative Model Plot
+
+```{r}
+## we plot the multiplicative method first
+ggplot(plot_data, aes(x = Date)) +
+  geom_line(aes(y = Actual, color='Actual'), linewidth = .4) + 
+  geom_line(aes(y = Multiplicative_Forecast, color = "Multiplicative Forecast"), 
+            linewidth = .25) +
+  xlab("Year") +
+  ylab("Temperature") +
+  ggtitle("HW Multiplicative Forecast") +
+  theme_ipsum() +
+  theme(
+    plot.title = element_text(size = 12, 
+                              face = "bold", 
+                              color = "grey25"),
+    axis.text.x = element_text(size = 9),
+    axis.text.y = element_text(size = 9),
+    plot.background = element_rect(fill = "#F5F4EF", color = NA),
+    legend.title=element_blank(),
+    legend.direction = 'vertical',
+    legend.pos = c(0.875, 1.11)
+  ) +
+  scale_color_manual(values = c("Actual" = "#A2C1F1", 
+                                "Multiplicative Forecast" = "#EBC0C8"))
+```
+
+It's hard to tell, but the forecast seems to fit best in more recent data points, than older data points.
+
+### Additive Model Plot
+
+```{r}
+ggplot(plot_data, aes(x = Date)) +
+  geom_line(aes(y = Actual, color='Actual'), linewidth = .4) + 
+  geom_line(aes(y = Additive_Forecast, color = "Additive Forecast"), linewidth = .25) +
+  xlab("Year") +
+  ylab("Temperature") +
+  ggtitle("HW Additive Forecast") +
+  theme_ipsum() +
+  theme(
+    plot.title = element_text(size = 12, 
+                              face = "bold", 
+                              color = "grey25"),
+    axis.text.x = element_text(size = 9),
+    axis.text.y = element_text(size = 9),
+    plot.background = element_rect(fill = "#F5F4EF", color = NA),
+    legend.title=element_blank(),
+    legend.direction = 'vertical',
+    legend.pos = c(0.875, 1.11)
+  ) +
+  scale_color_manual(values = c("Actual" = "#A2C1F1", 
+                                "Additive Forecast" = "#CC5175"))
+```
+
+Honestly, it looks about the same in the additive forecast, so let's get the root mean squared error of both and see how they both compare.
+
+```{r RMSE}
+add.RMSE <- sqrt(hw.add$SSE/nrow(hw.add$fitted))
+mult.RMSE <- sqrt(hw.mult$SSE/nrow(hw.mult$fitted))
+cat('HW Additive RMSE:', add.RMSE, '\nHW Multiplicative RMSE:', mult.RMSE)
+```
+
+Earlier, we chose our own $\alpha, \beta, \gamma$ values. Interestingly, the function produced nearly identical values. Let's see what they are:
+
+```{r}
+add.values <- data.frame(
+                  Alpha = hw.add$alpha,
+                  Beta = hw.add$beta,
+                  Gamma = hw.add$gamma
+)
+mult.values<- data.frame(
+                  Alpha = hw.mult$alpha,
+                  Beta = hw.mult$beta,
+                  Gamma = hw.mult$gamma
+)
+cbnd <- rbind(add.values, mult.values)
+rownames(cbnd) <- NULL
+kable(cbnd,
+      align='c',
+      caption='Holt-Winters\'-Produced Values')
+```
+Now that we know the function can produce very reliable values, with slightly better performance, we'll just use the `HoltWinters` function. Additionally, the additive forecast fares slightly better with a lower RMSE. What the lower RMSE of the additive forecast suggests is that the seasonal variations of the temperatures are roughly constant throughout the series.
+
+Now that we've chosen our model and smoothed our data, the next step is to determine whether the summers get later. We do this by applying the CUSUM method to our smoothed data from 1997 to 2015.
+
+## A CUSUM Approach to the Holt-Winters' Model
+
+We first convert our model into a data frame, so that it's prepped for CUSUM.
+
+```{r Build Matrix}
+## this almost looks like our temps file
+temp_hw <- as.data.frame(matrix(hw.add$fitted[,'xhat'], nrow(temps)))
+## assign the same funky column values
+colnames(temp_hw) <- colnames(temps)[c(3:21)]
+## almost there...
+temp_hw <- temp_hw %>%
+        mutate(DAY=temps$DAY) %>%
+        relocate(DAY, .before=1)
+head(temp_hw)
+```
+
+In the following code block, I'm going to average the rows and get the daily averages through the 20ish years. Then I'm going to plot it to determine where we should take the average of the weeks *prior to any significant change*.
+
+```{r averaging the rows}
+## forgot the rows weren't numeric lol
+num_rows <- sapply(temp_hw, is.numeric)
+## take the average
+daily_mean <- rowMeans(temp_hw[,num_rows])
+## put the results in a dataframe
+df <- data.frame(Day = as.Date(temp_hw$DAY, format='%d-%b'),
+                 Mean_Temperature=daily_mean)
+## cleaning up the column values
+breaks <- df$Day[c(seq(1,length(df$Day), by=15))]
+dates <- ymd(breaks)
+custom_labels <- format(dates, format='%B %d')
+## then plot!
+df %>%
+        ggplot( aes(x=Day, y=Mean_Temperature, group=1)) +
+        geom_point(shape=21, color="#3D85F7", fill="#F6F5E9", size=1) +
+        geom_line(color = "#C32E5A") +
+        theme_minimal(base_family = "Fira Sans Compressed") +
+        ggtitle("Smoothed Avg Daily Temps Per Year") +
+        labs(x = "Day", y = "Mean Temperature") +
+        theme_ipsum() +
+        theme(
+                plot.title = element_text(
+                        size = 12,
+                        face = "bold",
+                        vjust = 0,
+                        color = "grey25"
+    ),
+                axis.text.x = element_text(size = 9),
+                axis.text.y = element_text(size = 9),
+                plot.background = element_rect(fill = "#F5F4EF", color = NA)
+        ) +
+        scale_x_date(
+                breaks = breaks,
+                labels = custom_labels,
+                date_labels = "%b %d"
+  )
+```
+
+We see a sizable shift downward around August 30. Then it progressively gets cooler. I'm going to set our pre-shift temperature between July 1 to August 30.
+
+### CUSUM on 1997
+
+Now, the question asks whether the summers get later and later. We're going to be using 1997 as our baseline. We will perform CUSUM on 1997 first and then do it for the rest of the years.
+
+```{r 1997}
+## taking the average of the temperatures from Jul 1 to Aug 30
+mu.1997 <- mean(temp_hw$'1997'[1:61])
+## then the standard deviation
+sd.1997 <- sd(temp_hw$'1997'[1:61])
+## i'm setting our threshold to 5*sigma
+t.1997 <- 5 * sd.1997
+summary <- as.data.frame(t(matrix(summary(temp_hw$'2010'[1:61]))))
+kable(summary,
+      col.names = c('Min.', '1st Qu.', 'Median', 'Mean', '3rd Qu.', 'Max'),
+      align='c',
+      caption='Temperatures Stats in 1997 Between Jul 1 to Aug 30'
+)
+```
+
+Let's build a CUSUM function to produce our results. 
+
+```{r CUSUM function}
+cusum_metric <- function(x, sigma, mu, c_val, temp, opposite = F){
+        C <- c_val * sigma
+        x$Year <- temp
+        x$s_t <- 0
+        ## if opposite is FALSE, then this runs the lower bound
+        if(!opposite){
+                for(i in 2:nrow(x)){
+                        x[i, 's_t'] <- max(0, 
+                                           (x$s_t[i-1]
+                                            + mu
+                                            - x[i, temp]
+                                            - C)) 
+                }
+                return(x)
+        } else{ ## if opposite is TRUE, then this runs the upper bound
+                for(i in 2:nrow(x)){
+                        x[i, 's_t'] <- max(0, 
+                                           (x$s_t[i-1]
+                                            + x[i, temp]
+                                            - mu
+                                            - C))
+                }
+                return(x)
+        }
+}
+```
+
+Then we apply the function to the year 1997. I initially ran it with $C$ set to $\sigma$, but it flagged a date in early July, which is like peak summer. Atlantans would get mad at me. So I dampened the sensitivity of $C$, decreasing the number of false alarms.
+
+```{r CUSUM}
+## set c to 1*sigma to dampen sensitivity
+cusum.1997 <- cusum_metric(temp_hw[,1:2], sigma=sd.1997,
+                           mu=mu.1997, c_val=1,
+                           temp='1997', opposite=F)
+cusum.1997$DAY <- as.Date(cusum.1997$DAY, format = "%d-%b")
+```
+
+```{r}
+cusum.1997 %>%
+        ggplot( aes(x=DAY, y=s_t)) +
+        geom_line() +
+        geom_hline(yintercept = t.1997, color='#FD814E')+
+        scale_x_date(
+                breaks = breaks,
+                labels = custom_labels,
+                date_labels = "%b %d"
+        ) +
+        theme_minimal() +
+        ggtitle("Detecting Change in the Year 1997") +
+        labs(x = "Day", y = expression(s[t])) +
+        theme_ipsum() +
+        theme(
+                plot.title = element_text(size=12),
+                axis.title.y = element_text(size=14),
+                axis.title.x = element_text(size=10),
+                axis.text.x = element_text(size = 9),
+                axis.text.y = element_text(size = 9),
+                plot.background = element_rect(fill = "#F5F4EF", color = NA)
+        )
+cusum.1997$DAY <- format(cusum.1997$DAY, format='%b %d')
+```
+
+If I had set a lower $C$, the peaks in July would have triggered a change. With $s_t$ no longer triggering false alarms, we see that CUSUM detects its first significant change at the end of September.
+
+```{r baseline}
+kable(cusum.1997[cusum.1997$s_t>=t.1997,][1,],
+      col.names = c('Changed Detected', 'Daily High', 'Year',
+                    paste('$s_t$', collapse='')),
+      align='c',
+      caption=sprintf("Significant Temperatarure Detection in 1997 ($T$ is %s)",
+                      round(t.1997,2)
+      )
+)
+```
+
+Now we repeat this process for the remaining years. I'm going to create an empty data frame to store our results. Again, this only cycles through the years 1997-2015.
+
+### CUSUM on 1997-2015
+
+```{r}
+detection_df <- data.frame()
+## this looks ugly, so i'll explain line by line
+## this skips the DAY column
+for(i in 2:(ncol(temp_hw))){
+        ## we're going to use col_name in our function call, so we create it
+        col_name <- names(temp_hw)[i]
+        ## we apply col_name to our average
+        mu <- mean(temp_hw[, col_name][1:61])
+        ## to our sigma
+        sigma <- sd(temp_hw[, col_name][1:61])
+        ## threshold
+        t <- 5*sigma
+        ## our cusum function
+        ## as you can see, i set c_val to 1.25, i'll explain why later
+        cusum <- cusum_metric(temp_hw[,c('DAY',col_name)],
+                              sigma=sigma,
+                              mu=mu, c_val=1.25,
+                              temp=col_name, opposite=F)
+        ## this gets the first change detected (it's a row)
+        change_detected <- cusum[which(cusum$s_t>=t),][1,]
+        ## then we store it in a sub dataframe
+        change_detected_df <- data.frame(Day=change_detected$DAY, 
+                                         Year=change_detected$Year,
+                                         Temperature=change_detected[,col_name],
+                                         s_t=change_detected$s_t, 
+                                         T_value=t)
+        ## then append it to our empty data frame above
+        detection_df <- bind_rows(detection_df, change_detected_df)
+}
+## formatting stuff
+detection_df$Day <- as.Date(detection_df$Day, format = "%d-%b")
+## then we plot
+## this includes a regression line to see if there's any trend upward or downward
+detection_df %>%
+        ggplot( aes(x=Year, y=Day, group=1)) +
+        geom_point(shape=21, color="#3D85F7", fill="#F6F5E9", size=1) +
+        geom_line(color = "#C32E5A") +
+        theme_minimal(base_family = "Fira Sans Compressed") +
+        geom_text(
+                aes(label=format(Day, format='%b %d')), 
+                vjust=1,
+                family=font_an,
+                size=2.7
+                ) +
+        geom_smooth(method = "lm", formula = y ~ x, 
+                    se = FALSE, color='#3D85F7') +
+        ggtitle("Smoothed Daily Temps Per Year") +
+        labs(x = "Year", y = "Temperature") +
+        theme_ipsum() +
+        theme(
+                plot.title = element_text(
+                        size = 12,
+                        face = "bold",
+                        vjust = 0,
+                        color = "grey25"
+    ),
+                axis.text.x = element_text(size = 9),
+                axis.text.y = element_text(size = 9),
+                plot.background = element_rect(fill = "#F5F4EF", color = NA)
+        ) +
+        scale_x_discrete(
+                breaks = detection_df$Year[c(seq(1,
+                                              length(detection_df$Year),
+                                              by = 3))],
+
+  )
+```
+
+## Conclusion
+
+After raising our $C$ value slightly higher ($1.25\sigma$), we eliminate a false alarm on July 6 in 2010. After making the adjustment, it appears that our regression line doesn't depict any meaningful trend. It might even ever-so-slightly trend earlier rather than later.
+
+```{r}
+detection_df$Day <- format(detection_df$Day, format='%b %d')
+kable(
+        detection_df,
+        col.names = c('Changed Detected', 'Year','Temperature',
+                    paste('$s_t$', collapse=''),paste("$T$", collapse='')),
+        align='c',
+        caption='Detecting Later Summers'
+)
+```
+
+We see the values a little better in this table, but our detected changes hover between early summer to early October. As a result, our CUSUM method does not assure us that summer is actually ending later.
