@@ -28,7 +28,7 @@ This repository contains a collection of data science projects that cover variou
 - Description: Detecting outliers in a crime dataset using the Grubbs Test statistical method.
 - Tools: R, Grubbs Test, Outlier Detection
 
-### [Simulating Airport Security Wait Times Using SimPy]()
+### [Simulating Airport Security Wait Times Using SimPy](https://github.com/ericmcai/Projects/tree/main/Airport%20Simulation)
 - Description: Simulating a simplified airport security system to optimize passenger wait times.
 - Tools: Python, SimPy, Statistical Distributions
 
