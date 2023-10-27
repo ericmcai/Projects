@@ -28,6 +28,16 @@ This repository contains a collection of data science projects that cover variou
 - Description: Detecting outliers in a crime dataset using the Grubbs Test statistical method.
 - Tools: R, Grubbs Test, Outlier Detection
 
+### [Simulating Airport Security Wait Times Using SimPy]()
+- Description: Simulating a simplified airport security system to optimize passenger wait times.
+- Tools: Python, SimPy, Statistical Distributions
+
+### [Predicting Crime Rates Using Principal Components Regression]()
+- Description: Predicting crime rates using Principal Components Analysis
+- Tools: R, Principal Components Analysis (PCA), Regression Analysis
+
+### [Analyzing Crime Rates Using Regression Tree and Random Forest Models]()
+
 Feel free to explore these projects to learn more about each topic and the data science techniques used. If you have any questions or feedback, please don't hesitate to reach out.
 
 ## License
